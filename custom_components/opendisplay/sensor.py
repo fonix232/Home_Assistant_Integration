@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import time
+from typing import TYPE_CHECKING
 
 from homeassistant.components.bluetooth import async_last_service_info
 from homeassistant.components.sensor import (
@@ -145,8 +146,9 @@ async def async_setup_entry(
 ) -> None:
     """Set up OpenDisplay sensor entities."""
     coordinator = entry.runtime_data.coordinator
-    # LAN_ONLY_PLATFORMS excludes this platform.
-    assert isinstance(coordinator, OpenDisplayCoordinator)
+    if TYPE_CHECKING:
+        # LAN_ONLY_PLATFORMS excludes this platform.
+        assert isinstance(coordinator, OpenDisplayCoordinator)
     device_config = entry.runtime_data.device_config
     power_config = device_config.power
     descriptions: list[OpenDisplaySensorEntityDescription] = [

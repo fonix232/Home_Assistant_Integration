@@ -1,6 +1,7 @@
 """Event platform for OpenDisplay devices — button press/release and touch events."""
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from homeassistant.components.event import (
     EventDeviceClass,
@@ -42,8 +43,9 @@ async def async_setup_entry(
 ) -> None:
     """Set up OpenDisplay event entities from binary_inputs and touch_controllers config."""
     coordinator = entry.runtime_data.coordinator
-    # LAN_ONLY_PLATFORMS excludes this platform.
-    assert isinstance(coordinator, OpenDisplayCoordinator)
+    if TYPE_CHECKING:
+        # LAN_ONLY_PLATFORMS excludes this platform.
+        assert isinstance(coordinator, OpenDisplayCoordinator)
     entity_registry = er.async_get(hass)
 
     def _remove_stale(prefix: str, active_ids: set[str]) -> None:

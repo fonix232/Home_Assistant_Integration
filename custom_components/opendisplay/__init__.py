@@ -34,7 +34,13 @@ from opendisplay import (
 from opendisplay.models.config_json import config_from_json, config_to_json
 
 from .ble_lock import async_get_ble_lock, ble_connection
-from .const import CONF_CACHED_STATE, CONF_ENCRYPTION_KEY, DOMAIN, SETUP_DEADLINE_S
+from .const import (
+    CONF_CACHED_STATE,
+    CONF_ENCRYPTION_KEY,
+    CONF_LAN_ONLY,
+    DOMAIN,
+    SETUP_DEADLINE_S,
+)
 from .coordinator import OpenDisplayCoordinator, OpenDisplayLanCoordinator
 from .delivery import DeliveryManager
 from .services import async_setup_services
@@ -227,6 +233,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDisplayConfigEntry) 
     if TYPE_CHECKING:
         assert address is not None
 
+    if is_lan_only(entry) and async_ble_device_from_address(
+        hass, address, connectable=True
+    ):
+        # Onboarded while its BLE advert was stale, but the tag has BLE after all.
+        hass.config_entries.async_update_entry(
+            entry, data={k: v for k, v in entry.data.items() if k != CONF_LAN_ONLY}
+        )
     lan_only = is_lan_only(entry)
     connect_kwargs: dict[str, Any] | None = None
     if lan_only:
@@ -371,6 +384,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDisplayConfigEntry) 
         async_set_fallback_availability_interval(
             hass, address, profile.availability_interval
         )
+
+    if isinstance(coordinator, OpenDisplayLanCoordinator):
+        # Interrogation just reached the tag, so a failed probe is a flap: retry
+        # setup, as the BLE path does for an unreachable tag.
+        await coordinator.async_config_entry_first_refresh()
 
     manager = DeliveryManager(hass, entry)
     entry.runtime_data.delivery = manager
