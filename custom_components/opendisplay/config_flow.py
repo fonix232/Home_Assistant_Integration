@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Mapping
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.bluetooth import (
@@ -19,6 +20,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import callback
+from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
@@ -78,6 +80,8 @@ _LOGGER = logging.getLogger(__name__)
 
 # Firmware advertises as "OD" followed by the device id in hex.
 NAME_PREFIX = "OD"
+
+_FORMATTED_MAC = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}")
 
 
 def _is_opendisplay(discovery_info: BluetoothServiceInfoBleak) -> bool:
@@ -227,13 +231,14 @@ class OpenDisplayConfigFlow(ConfigFlow, domain=DOMAIN):
         The device is identified by its BLE MAC (the ``mac`` TXT key), so a
         WiFi-discovered tag dedups onto its existing BLE entry (and vice versa):
         the unique_id is the uppercase-colon MAC, matching the raw BlueZ form the
-        bluetooth step stores. An already-configured entry just gains
-        host/port/tls (and an mDNS-presence timestamp so the resolver can prefer
-        WiFi); a brand-new device goes through a confirm step.
+        bluetooth step stores, whatever separator or case the TXT used. An
+        already-configured entry just gains host/port/tls (and an mDNS-presence
+        timestamp so the resolver can prefer WiFi); a brand-new device goes
+        through a confirm step.
         """
         properties = discovery_info.properties
-        mac = _txt_str(properties, "mac")
-        if not mac:
+        mac = format_mac(_txt_str(properties, "mac") or "")
+        if not _FORMATTED_MAC.fullmatch(mac):
             # Identity is anchored on the BLE MAC (SECTION 9); without it the
             # device can't be correlated with a BLE entry — ignore the record.
             return self.async_abort(reason="no_mac")

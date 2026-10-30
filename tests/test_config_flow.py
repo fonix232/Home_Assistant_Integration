@@ -720,3 +720,36 @@ async def test_zeroconf_confirm_reports_an_unreachable_endpoint(
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+@pytest.mark.parametrize(
+    "mac", ["aa:bb:cc:dd:ee:ff", "aabbccddeeff", "AA-BB-CC-DD-EE-FF"]
+)
+async def test_zeroconf_mac_spellings_match_the_ble_entry(
+    hass: HomeAssistant, mock_config_entry: MockConfigEntry, mac: str
+) -> None:
+    """Any TXT spelling of the MAC dedups onto the uppercase BlueZ unique_id."""
+    mock_config_entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_ZEROCONF},
+        data=make_zeroconf_info(properties={"mac": mac}),
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+    assert mock_config_entry.data[CONF_HOST] == "192.168.1.50"
+
+
+async def test_zeroconf_with_a_malformed_mac_is_ignored(hass: HomeAssistant) -> None:
+    """A mac TXT that is not a MAC cannot anchor identity."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_ZEROCONF},
+        data=make_zeroconf_info(properties={"mac": "not-a-mac"}),
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_mac"
