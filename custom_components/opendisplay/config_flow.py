@@ -52,6 +52,7 @@ from .const import (
     CONF_ENCRYPTION_KEY,
     CONF_GITHUB_TOKEN,
     CONF_HOST,
+    CONF_LAN_ONLY,
     CONF_MAX_QUEUE_SIZE,
     CONF_MISSED_CYCLES,
     CONF_PORT,
@@ -73,7 +74,7 @@ from .const import (
     SLEEP_MODE_OFF,
     SLEEP_MODE_ON,
 )
-from .transport import async_probe_tcp, note_mdns_seen
+from .transport import async_probe_tcp, is_lan_only, note_mdns_seen, resolve_transport
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -198,9 +199,26 @@ class OpenDisplayConfigFlow(ConfigFlow, domain=DOMAIN):
     async def _async_test_connection(
         self, address: str, encryption_key: bytes | None = None
     ) -> None:
-        """Connect to the device and verify it responds."""
-        ble_device = async_ble_device_from_address(self.hass, address, connectable=True)
-        if ble_device is None:
+        """Connect to the device and verify it responds.
+
+        Goes over TCP for an existing LAN-only entry (reauth), else over BLE.
+        """
+        entry = self.hass.config_entries.async_entry_for_domain_unique_id(
+            DOMAIN, address
+        )
+        connect_kwargs: dict[str, Any]
+        if entry is not None and is_lan_only(entry):
+            resolved = resolve_transport(entry)
+            connect_kwargs = {
+                "host": resolved.host,
+                "port": resolved.port,
+                "tls": resolved.tls,
+            }
+        elif ble_device := async_ble_device_from_address(
+            self.hass, address, connectable=True
+        ):
+            connect_kwargs = {"mac_address": address, "ble_device": ble_device}
+        else:
             raise BLEConnectionError(f"Could not find connectable device for {address}")
 
         # Bound the whole probe (connect + auto-interrogate + firmware read) so a
@@ -212,9 +230,7 @@ class OpenDisplayConfigFlow(ConfigFlow, domain=DOMAIN):
                 async with (
                     ble_connection(address, "connection probe (config flow)"),
                     OpenDisplayDevice(
-                        mac_address=address,
-                        ble_device=ble_device,
-                        encryption_key=encryption_key,
+                        **connect_kwargs, encryption_key=encryption_key
                     ) as device,
                 ):
                     await device.read_firmware_version()
@@ -295,14 +311,17 @@ class OpenDisplayConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Unexpected error probing WiFi device")
                 errors["base"] = "unknown"
             else:
-                return self.async_create_entry(
-                    title=name,
-                    data={
-                        CONF_HOST: self._zeroconf_host,
-                        CONF_PORT: self._zeroconf_port,
-                        CONF_TLS: self._zeroconf_tls,
-                    },
-                )
+                data: dict[str, Any] = {
+                    CONF_HOST: self._zeroconf_host,
+                    CONF_PORT: self._zeroconf_port,
+                    CONF_TLS: self._zeroconf_tls,
+                }
+                assert self.unique_id is not None
+                if not async_ble_device_from_address(
+                    self.hass, self.unique_id, connectable=True
+                ):
+                    data[CONF_LAN_ONLY] = True
+                return self.async_create_entry(title=name, data=data)
 
         self._set_confirm_only()
         return self.async_show_form(
@@ -318,6 +337,17 @@ class OpenDisplayConfigFlow(ConfigFlow, domain=DOMAIN):
         if not _is_opendisplay(discovery_info):
             return self.async_abort(reason="not_supported")
         await self.async_set_unique_id(discovery_info.address)
+        entry = self.hass.config_entries.async_entry_for_domain_unique_id(
+            DOMAIN, discovery_info.address
+        )
+        if entry is not None and is_lan_only(entry):
+            # The tag onboarded over LAN turns out to have BLE too: make it a
+            # regular BLE+WiFi entry so it gains advert telemetry and BLE fallback.
+            return self.async_update_reload_and_abort(
+                entry,
+                data={k: v for k, v in entry.data.items() if k != CONF_LAN_ONLY},
+                reason="already_configured",
+            )
         self._abort_if_unique_id_configured()
         self._discovery_info = discovery_info
         self.context["title_placeholders"] = {"name": discovery_info.name}

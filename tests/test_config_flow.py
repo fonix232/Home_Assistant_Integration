@@ -26,6 +26,7 @@ from pytest_homeassistant_custom_component.common import (
 from custom_components.opendisplay.const import (
     CONF_ENCRYPTION_KEY,
     CONF_HOST,
+    CONF_LAN_ONLY,
     CONF_PORT,
     CONF_TLS,
     CONNECT_PROBE_DEADLINE_S,
@@ -722,6 +723,37 @@ async def test_zeroconf_confirm_reports_an_unreachable_endpoint(
     assert result["errors"] == {"base": "cannot_connect"}
 
 
+# --- LAN-only tags (mDNS, no Bluetooth presence) ---------------------------
+
+LAN_ONLY_DATA = {
+    CONF_HOST: "192.168.1.9",
+    CONF_PORT: 2446,
+    CONF_TLS: False,
+    CONF_LAN_ONLY: True,
+}
+
+
+async def test_zeroconf_without_bluetooth_creates_a_lan_only_entry(
+    hass: HomeAssistant,
+) -> None:
+    """A tag no Bluetooth scanner has seen is onboarded as LAN-only."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=ZEROCONF_INFO
+    )
+    with (
+        patch("custom_components.opendisplay.config_flow.async_probe_tcp"),
+        patch(
+            "custom_components.opendisplay.config_flow.async_ble_device_from_address",
+            return_value=None,
+        ),
+    ):
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_LAN_ONLY] is True
+    assert result["result"].unique_id == TEST_ADDRESS
+
+
 @pytest.mark.parametrize(
     "mac", ["aa:bb:cc:dd:ee:ff", "aabbccddeeff", "AA-BB-CC-DD-EE-FF"]
 )
@@ -753,3 +785,70 @@ async def test_zeroconf_with_a_malformed_mac_is_ignored(hass: HomeAssistant) -> 
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "no_mac"
+
+
+async def test_zeroconf_moves_a_lan_only_entry_to_the_new_host(
+    hass: HomeAssistant,
+) -> None:
+    """A LAN-only tag that changes address keeps following its announcements."""
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=TEST_ADDRESS, data=LAN_ONLY_DATA)
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_ZEROCONF}, data=ZEROCONF_INFO
+    )
+
+    assert result["reason"] == "already_configured"
+    assert entry.data[CONF_HOST] == "192.168.1.50"
+    assert entry.data[CONF_PORT] == 1234
+    assert entry.data[CONF_LAN_ONLY] is True
+
+
+async def test_bluetooth_sighting_turns_a_lan_only_entry_into_a_ble_entry(
+    hass: HomeAssistant,
+) -> None:
+    """The same MAC seen over BLE merges into the entry instead of duplicating it."""
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=TEST_ADDRESS, data=LAN_ONLY_DATA)
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_BLUETOOTH},
+        data=VALID_SERVICE_INFO,
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+    assert CONF_LAN_ONLY not in entry.data
+    assert entry.data[CONF_HOST] == "192.168.1.9"
+
+
+async def test_reauth_of_a_lan_only_entry_connects_over_tcp(
+    hass: HomeAssistant, mock_opendisplay_device_class: MagicMock
+) -> None:
+    """Reauth tests the new key over the LAN, since the tag has no BLE."""
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=TEST_ADDRESS, data=LAN_ONLY_DATA)
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+    with patch(
+        "custom_components.opendisplay.config_flow.async_ble_device_from_address",
+        return_value=None,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={CONF_ENCRYPTION_KEY: ENCRYPTION_KEY}
+        )
+
+    assert result["reason"] == "reauth_successful"
+    kwargs = mock_opendisplay_device_class.call_args.kwargs
+    assert (kwargs["host"], kwargs["port"], kwargs["tls"]) == (
+        "192.168.1.9",
+        2446,
+        False,
+    )
+    assert "mac_address" not in kwargs
