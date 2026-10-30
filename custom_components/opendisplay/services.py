@@ -43,8 +43,6 @@ import voluptuous as vol
 from opendisplay import (
     AuthenticationFailedError,
     AuthenticationRequiredError,
-    BLEConnectionError,
-    BLETimeoutError,
     BuzzerActivateConfig,
     ColorScheme,
     DitherMode,
@@ -54,8 +52,10 @@ from opendisplay import (
     NfcNotSupportedError,
     NfcRecordType,
     NfcWriteError,
+    OpenDisplayConnectionError,
     OpenDisplayDevice,
     OpenDisplayError,
+    OpenDisplayTimeoutError,
     PartialState,
     RefreshMode,
     Rotation,
@@ -580,7 +580,8 @@ async def _async_connect_and_run(
         raise HomeAssistantError(
             translation_domain=DOMAIN, translation_key="authentication_error"
         ) from err
-    except (BLEConnectionError, BLETimeoutError) as err:
+    # The parents, not the BLE subclasses: a LAN (TCP) transport raises these.
+    except (OpenDisplayConnectionError, OpenDisplayTimeoutError) as err:
         if reraise_ble:
             raise _DeviceUnavailable from err
         raise HomeAssistantError(
