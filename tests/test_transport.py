@@ -6,6 +6,7 @@ else runs against a really-set-up config entry, so the runtime_data fields the
 resolver reads and writes are the real dataclass rather than a stand-in.
 """
 
+import asyncio
 from collections.abc import Awaitable, Callable
 import time
 from typing import Any
@@ -27,6 +28,7 @@ from custom_components.opendisplay.const import (
 from custom_components.opendisplay.transport import (
     TRANSPORT_BLE,
     TRANSPORT_WIFI,
+    async_probe_tcp,
     async_run_with_fallback,
     note_mdns_seen,
     resolve_transport,
@@ -251,3 +253,29 @@ async def test_ble_unavailable_raises_the_supplied_exception(
         )
 
     action.assert_not_awaited()
+
+
+# -- async_probe_tcp ----------------------------------------------------------
+
+
+@pytest.mark.usefixtures("socket_enabled")
+async def test_probe_connects_to_a_listening_endpoint_and_fails_on_a_closed_one() -> (
+    None
+):
+    """The probe is a real TCP connect: it succeeds on a listener, raises otherwise."""
+    accepted = asyncio.Event()
+
+    async def _on_connect(
+        _reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        accepted.set()
+        writer.close()
+
+    server = await asyncio.start_server(_on_connect, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    async with server:
+        await async_probe_tcp("127.0.0.1", port)
+        await asyncio.wait_for(accepted.wait(), 1)
+
+    with pytest.raises(ConnectionRefusedError):
+        await async_probe_tcp("127.0.0.1", port)

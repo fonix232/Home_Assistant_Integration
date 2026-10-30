@@ -2,7 +2,6 @@
 
 import asyncio
 from collections.abc import Mapping
-import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -71,9 +70,8 @@ from .const import (
     SLEEP_MODE_AUTO,
     SLEEP_MODE_OFF,
     SLEEP_MODE_ON,
-    TCP_CONNECT_TIMEOUT_S,
 )
-from .transport import note_mdns_seen
+from .transport import async_probe_tcp, note_mdns_seen
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -221,25 +219,6 @@ class OpenDisplayConfigFlow(ConfigFlow, domain=DOMAIN):
                 f"Connection probe exceeded {CONNECT_PROBE_DEADLINE_S:.0f}s"
             ) from err
 
-    async def _async_test_connection_tcp(self, host: str, port: int) -> None:
-        """Probe a TCP/LAN endpoint for reachability (zeroconf confirm step).
-
-        A lightweight reachability check: open a TCP connection with a short
-        timeout, then close it immediately. It does not speak the protocol (no
-        interrogation) — full interrogation happens at entry setup, over WiFi or a
-        BLE fallback. Deliberately separate from the BLE-only
-        ``_async_test_connection`` so the two transports' probes stay independent.
-
-        Raises:
-            OSError / TimeoutError: if the endpoint is unreachable.
-
-        """
-        async with asyncio.timeout(TCP_CONNECT_TIMEOUT_S):
-            _reader, writer = await asyncio.open_connection(host, port)
-        writer.close()
-        with contextlib.suppress(OSError):
-            await writer.wait_closed()
-
     async def async_step_zeroconf(
         self, discovery_info: ZeroconfServiceInfo
     ) -> ConfigFlowResult:
@@ -304,9 +283,7 @@ class OpenDisplayConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                await self._async_test_connection_tcp(
-                    self._zeroconf_host, self._zeroconf_port
-                )
+                await async_probe_tcp(self._zeroconf_host, self._zeroconf_port)
             except OSError, TimeoutError:
                 errors["base"] = "cannot_connect"
             except Exception:

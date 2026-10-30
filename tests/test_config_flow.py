@@ -640,9 +640,7 @@ async def test_zeroconf_discovery_creates_a_wifi_entry(hass: HomeAssistant) -> N
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "zeroconf_confirm"
 
-    with patch(
-        "custom_components.opendisplay.config_flow.OpenDisplayConfigFlow._async_test_connection_tcp"
-    ):
+    with patch("custom_components.opendisplay.config_flow.async_probe_tcp"):
         result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -715,7 +713,7 @@ async def test_zeroconf_confirm_reports_an_unreachable_endpoint(
     )
 
     with patch(
-        "custom_components.opendisplay.config_flow.OpenDisplayConfigFlow._async_test_connection_tcp",
+        "custom_components.opendisplay.config_flow.async_probe_tcp",
         side_effect=OSError,
     ):
         result = await hass.config_entries.flow.async_configure(result["flow_id"], {})

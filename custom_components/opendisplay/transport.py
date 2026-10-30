@@ -15,6 +15,7 @@ BLE for that same delivery — a hard requirement — via ``async_run_with_fallb
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 import contextlib
 from dataclasses import dataclass
@@ -37,6 +38,7 @@ from .const import (
     CONF_TLS,
     DEFAULT_LAN_PORT,
     MDNS_FRESHNESS_WINDOW_S,
+    TCP_CONNECT_TIMEOUT_S,
 )
 
 if TYPE_CHECKING:
@@ -69,6 +71,22 @@ class ResolvedTransport:
     host: str | None
     port: int
     tls: bool
+
+
+async def async_probe_tcp(host: str, port: int) -> None:
+    """Open and immediately close a TCP connection to ``host:port``.
+
+    A reachability check only: it does not speak the protocol.
+
+    Raises:
+        OSError / TimeoutError: if the endpoint is unreachable.
+
+    """
+    async with asyncio.timeout(TCP_CONNECT_TIMEOUT_S):
+        _reader, writer = await asyncio.open_connection(host, port)
+    writer.close()
+    with contextlib.suppress(OSError):
+        await writer.wait_closed()
 
 
 def resolve_transport(entry: OpenDisplayConfigEntry) -> ResolvedTransport:
