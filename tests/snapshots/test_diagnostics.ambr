@@ -135,6 +135,7 @@
     'transport': dict({
       'communication_modes': 0,
       'host': None,
+      'lan_only': False,
       'last_transport': None,
       'mdns_last_seen': None,
       'port': None,

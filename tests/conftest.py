@@ -14,7 +14,11 @@ from pytest_homeassistant_custom_component.syrupy import HomeAssistantSnapshotEx
 from pytest_homeassistant_custom_component.typing import RecorderInstanceContextManager
 from syrupy.assertion import SnapshotAssertion
 
-from custom_components.opendisplay import BASE_PLATFORMS, FLEX_PLATFORMS
+from custom_components.opendisplay import (
+    BASE_PLATFORMS,
+    FLEX_PLATFORMS,
+    LAN_ONLY_PLATFORMS,
+)
 from custom_components.opendisplay.const import CONF_ENCRYPTION_KEY, DOMAIN
 
 from . import (
@@ -281,11 +285,13 @@ def setup_entry(
         # device type is never set up during tests
         flex_platforms = [p for p in FLEX_PLATFORMS if p in platforms]
         base_platforms = [p for p in BASE_PLATFORMS if p in platforms]
+        lan_platforms = [p for p in LAN_ONLY_PLATFORMS if p in platforms]
 
         mock_config_entry.add_to_hass(hass)
         with (
             patch("custom_components.opendisplay.BASE_PLATFORMS", base_platforms),
             patch("custom_components.opendisplay.FLEX_PLATFORMS", flex_platforms),
+            patch("custom_components.opendisplay.LAN_ONLY_PLATFORMS", lan_platforms),
         ):
             assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
         await hass.async_block_till_done()

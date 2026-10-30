@@ -12,7 +12,7 @@ import homeassistant.util.dt as dt_util
 
 from . import OpenDisplayConfigEntry
 from .const import SIGNAL_IMAGE_UPDATED, SIGNAL_PENDING_STATE
-from .coordinator import OpenDisplayCoordinator
+from .coordinator import OpenDisplayCoordinator, OpenDisplayLanCoordinator
 from .delivery import DeliverySnapshot
 
 PARALLEL_UPDATES = 0
@@ -42,7 +42,9 @@ class OpenDisplayImageEntity(ImageEntity):
     _attr_content_type = "image/jpeg"
 
     def __init__(
-        self, hass: HomeAssistant, coordinator: OpenDisplayCoordinator
+        self,
+        hass: HomeAssistant,
+        coordinator: OpenDisplayCoordinator | OpenDisplayLanCoordinator,
     ) -> None:
         """Initialize the image entity."""
         super().__init__(hass)

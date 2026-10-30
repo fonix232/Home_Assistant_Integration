@@ -13,6 +13,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import OpenDisplayConfigEntry
 from .const import (
@@ -22,6 +23,7 @@ from .const import (
     DEFAULT_LAN_PORT,
     SIGNAL_PENDING_STATE,
 )
+from .coordinator import OpenDisplayLanCoordinator
 from .delivery import DeliveryManager, DeliverySnapshot
 from .entity import OpenDisplayEntity
 
@@ -40,10 +42,11 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up the OpenDisplay binary sensors."""
+    coordinator = entry.runtime_data.coordinator
     entities: list[BinarySensorEntity] = [
-        OpenDisplayConnectivityBinarySensor(
-            entry.runtime_data.coordinator, _CONNECTIVITY_DESCRIPTION
-        )
+        OpenDisplayLanConnectivityBinarySensor(coordinator)
+        if isinstance(coordinator, OpenDisplayLanCoordinator)
+        else OpenDisplayConnectivityBinarySensor(coordinator, _CONNECTIVITY_DESCRIPTION)
     ]
 
     manager = entry.runtime_data.delivery
@@ -86,6 +89,33 @@ class OpenDisplayConnectivityBinarySensor(
     @property
     def is_on(self) -> bool:
         """Return True if the device is currently reachable via BLE."""
+        return self.coordinator.available
+
+
+class OpenDisplayLanConnectivityBinarySensor(
+    CoordinatorEntity[OpenDisplayLanCoordinator], BinarySensorEntity
+):
+    """Reports whether a LAN-only tag answered its last TCP probe."""
+
+    _attr_has_entity_name = True
+    entity_description = _CONNECTIVITY_DESCRIPTION
+
+    def __init__(self, coordinator: OpenDisplayLanCoordinator) -> None:
+        """Initialize with the same unique_id the BLE connectivity sensor uses."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-connectivity"
+        self._attr_device_info = DeviceInfo(
+            connections={(CONNECTION_BLUETOOTH, coordinator.address)},
+        )
+
+    @property
+    def available(self) -> bool:
+        """Connectivity is reported regardless of the device's availability."""
+        return True
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if the last TCP probe connected."""
         return self.coordinator.available
 
 

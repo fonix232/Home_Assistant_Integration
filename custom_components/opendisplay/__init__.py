@@ -35,10 +35,11 @@ from opendisplay.models.config_json import config_from_json, config_to_json
 
 from .ble_lock import async_get_ble_lock, ble_connection
 from .const import CONF_CACHED_STATE, CONF_ENCRYPTION_KEY, DOMAIN, SETUP_DEADLINE_S
-from .coordinator import OpenDisplayCoordinator
+from .coordinator import OpenDisplayCoordinator, OpenDisplayLanCoordinator
 from .delivery import DeliveryManager
 from .services import async_setup_services
 from .sleep import SleepProfile
+from .transport import is_lan_only, resolve_transport
 
 if TYPE_CHECKING:
     from opendisplay.models import FirmwareVersion
@@ -59,13 +60,19 @@ FLEX_PLATFORMS = [
     Platform.SENSOR,
     Platform.UPDATE,
 ]
+# A LAN-only tag never advertises, so the advertisement-fed platforms (sensors,
+# button/touch events) have nothing to report, and OTA runs over BLE only.
+LAN_ONLY_PLATFORMS = [
+    Platform.BINARY_SENSOR,
+    Platform.IMAGE,
+]
 
 
 @dataclass
 class OpenDisplayRuntimeData:
     """Runtime data for an OpenDisplay config entry."""
 
-    coordinator: OpenDisplayCoordinator
+    coordinator: OpenDisplayCoordinator | OpenDisplayLanCoordinator
     firmware: FirmwareVersion
     device_config: GlobalConfig
     is_flex: bool
@@ -213,15 +220,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDisplayConfigEntry) 
     tag, the entry is set up entirely from cache without connecting; the
     delivery manager re-reads it at the next wake. Any other unreachable case
     preserves the original ConfigEntryNotReady/ConfigEntryAuthFailed behavior.
+
+    A LAN-only entry is interrogated over TCP instead and never looks for BLE.
     """
     address = entry.unique_id
     if TYPE_CHECKING:
         assert address is not None
 
-    ble_device = async_ble_device_from_address(hass, address, connectable=True)
+    lan_only = is_lan_only(entry)
+    connect_kwargs: dict[str, Any] | None = None
+    if lan_only:
+        resolved = resolve_transport(entry)
+        connect_kwargs = {
+            "host": resolved.host,
+            "port": resolved.port,
+            "tls": resolved.tls,
+        }
+    elif ble_device := async_ble_device_from_address(hass, address, connectable=True):
+        connect_kwargs = {"mac_address": address, "ble_device": ble_device}
     from_cache = False
 
-    if ble_device is None:
+    if connect_kwargs is None:
         cached = _cache_setup_if_sleepy(entry)
         if cached is None:
             raise ConfigEntryNotReady(
@@ -251,15 +270,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDisplayConfigEntry) 
                 async with (
                     ble_connection(address, "setup interrogation"),
                     OpenDisplayDevice(
-                        mac_address=address,
-                        ble_device=ble_device,
-                        encryption_key=encryption_key,
+                        **connect_kwargs, encryption_key=encryption_key
                     ) as device,
                 ):
                     fw = await device.read_firmware_version()
                     is_flex = device.is_flex
-                    # Capture while connected: landing_url() reads the advertised name.
-                    landing_url = device.landing_url()
+                    # Capture while connected: landing_url() reads the advertised
+                    # name, which a TCP session does not carry.
+                    landing_url = None if lan_only else device.landing_url()
             device_config = device.config
             if TYPE_CHECKING:
                 assert device_config is not None
@@ -300,7 +318,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDisplayConfigEntry) 
     from .update import _format_firmware_version
 
     profile = SleepProfile.from_entry(entry, device_config)
-    coordinator = OpenDisplayCoordinator(hass, address, device_config.binary_inputs)
+    coordinator = (
+        OpenDisplayLanCoordinator(hass, entry)
+        if lan_only
+        else OpenDisplayCoordinator(hass, address, device_config.binary_inputs)
+    )
 
     manufacturer = device_config.manufacturer
     display = device_config.displays[0]
@@ -345,7 +367,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDisplayConfigEntry) 
     # Keep entities available across sleep cycles: without this, any sleep
     # interval longer than the ~5 min staleness horizon flaps everything
     # unavailable once per cycle.
-    if profile.is_sleepy:
+    if profile.is_sleepy and not lan_only:
         async_set_fallback_availability_interval(
             hass, address, profile.availability_interval
         )
@@ -377,13 +399,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenDisplayConfigEntry) 
         else:
             hass.async_create_task(_async_reload_after_reboot(hass, entry))
 
-    entry.async_on_unload(coordinator.async_subscribe_reboot(_schedule_reboot_reload))
+    if isinstance(coordinator, OpenDisplayCoordinator):
+        entry.async_on_unload(
+            coordinator.async_subscribe_reboot(_schedule_reboot_reload)
+        )
 
     return True
 
 
 def _get_platforms(runtime_data: OpenDisplayRuntimeData) -> list[Platform]:
     """Return the platforms to set up for this device."""
+    if isinstance(runtime_data.coordinator, OpenDisplayLanCoordinator):
+        return list(LAN_ONLY_PLATFORMS)
     return list(FLEX_PLATFORMS if runtime_data.is_flex else BASE_PLATFORMS)
 
 

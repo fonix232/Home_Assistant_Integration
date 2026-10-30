@@ -1,4 +1,4 @@
-"""Passive BLE coordinator for OpenDisplay devices."""
+"""Coordinators for OpenDisplay devices: passive BLE, or TCP polling for LAN-only."""
 
 from dataclasses import dataclass, field
 import logging
@@ -12,7 +12,9 @@ from homeassistant.components.bluetooth import (
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothDataUpdateCoordinator,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from opendisplay import MANUFACTURER_ID, AdvertisementTracker, parse_advertisement
 from opendisplay.models.advertisement import (
@@ -22,6 +24,10 @@ from opendisplay.models.advertisement import (
     TouchTracker,
 )
 from opendisplay.models.config import BinaryInputs
+
+from .ble_lock import async_get_ble_lock, ble_connection
+from .const import LAN_PROBE_INTERVAL
+from .transport import async_probe_tcp, resolve_transport
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -190,3 +196,68 @@ class OpenDisplayCoordinator(PassiveBluetoothDataUpdateCoordinator):
             _LOGGER.info("%s: Device rebooted since last connection", self.address)
             for reboot_callback in list(self._reboot_callbacks):
                 reboot_callback()
+
+
+class OpenDisplayLanCoordinator(DataUpdateCoordinator[None]):
+    """Availability for a LAN-only tag, from a periodic TCP connect.
+
+    Stands in for the passive BLE coordinator on a tag that never advertises:
+    available while the last probe connected, and every successful probe is a
+    "device seen" event for the delivery manager. There is no advertisement, so
+    ``data`` stays None and nothing advert-derived is reported.
+    """
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the coordinator for ``entry``'s LAN endpoint."""
+        super().__init__(
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=f"OpenDisplay {entry.unique_id}",
+            update_interval=LAN_PROBE_INTERVAL,
+        )
+        self.address: str = entry.unique_id or ""
+        self._device_seen_callbacks: set[CALLBACK_TYPE] = set()
+
+    @property
+    def available(self) -> bool:
+        """Return True if the last TCP probe connected."""
+        return self.last_update_success
+
+    @callback
+    def async_start(self) -> CALLBACK_TYPE:
+        """Start probing; returns the stop callback.
+
+        Holds its own listener because the probe also wakes the delivery
+        manager, so it must run even when every entity is disabled.
+        """
+        return self.async_add_listener(lambda: None)
+
+    @callback
+    def async_subscribe_device_seen(self, callback_: CALLBACK_TYPE) -> CALLBACK_TYPE:
+        """Subscribe to successful probes. Returns an unsubscribe callback."""
+        self._device_seen_callbacks.add(callback_)
+
+        @callback
+        def _unsubscribe() -> None:
+            self._device_seen_callbacks.discard(callback_)
+
+        return _unsubscribe
+
+    async def _async_update_data(self) -> None:
+        """Probe the endpoint unless a session already holds the tag's link."""
+        # A held lock means a delivery has the tag's single LAN client slot, which
+        # is proof enough it is up; a probe would only queue behind it.
+        if not async_get_ble_lock(self.address).locked():
+            assert self.config_entry is not None
+            resolved = resolve_transport(self.config_entry)
+            assert resolved.host is not None
+            try:
+                async with ble_connection(self.address, "LAN presence probe"):
+                    await async_probe_tcp(resolved.host, resolved.port)
+            except (OSError, TimeoutError) as err:
+                raise UpdateFailed(
+                    f"{resolved.host}:{resolved.port} unreachable: {err!r}"
+                ) from err
+        for device_seen_callback in list(self._device_seen_callbacks):
+            device_seen_callback()

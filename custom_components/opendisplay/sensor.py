@@ -28,7 +28,7 @@ from opendisplay.models.config import SensorData
 from opendisplay.models.enums import CapacityEstimator, PowerMode, SensorType
 
 from . import OpenDisplayConfigEntry
-from .coordinator import OpenDisplayUpdate
+from .coordinator import OpenDisplayCoordinator, OpenDisplayUpdate
 from .entity import OpenDisplayEntity
 
 PARALLEL_UPDATES = 0
@@ -145,6 +145,8 @@ async def async_setup_entry(
 ) -> None:
     """Set up OpenDisplay sensor entities."""
     coordinator = entry.runtime_data.coordinator
+    # LAN_ONLY_PLATFORMS excludes this platform.
+    assert isinstance(coordinator, OpenDisplayCoordinator)
     device_config = entry.runtime_data.device_config
     power_config = device_config.power
     descriptions: list[OpenDisplaySensorEntityDescription] = [

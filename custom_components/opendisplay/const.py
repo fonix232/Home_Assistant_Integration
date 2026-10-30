@@ -14,6 +14,10 @@ CONF_ENCRYPTION_KEY = "encryption_key"
 CONF_HOST = "host"
 CONF_PORT = "port"
 CONF_TLS = "tls"
+# Set on an entry onboarded over mDNS while no Bluetooth presence was known for
+# its MAC. Such a tag is reached only over TCP: setup, availability and delivery
+# never touch BLE. Cleared when Bluetooth discovery later finds the same MAC.
+CONF_LAN_ONLY = "lan_only"
 
 # Default LAN ports (SECTION 9). Plaintext is the configured base port; TLS is
 # derived as base + 1. Clients learn the live port from the mDNS SRV record.
@@ -31,6 +35,11 @@ MDNS_FRESHNESS_WINDOW_S = MDNS_FRESHNESS_WINDOW.total_seconds()
 # WiFi attempt. Short: a reachable LAN device connects in well under a second,
 # so 5 s only bounds an unreachable/stale host before falling back to BLE.
 TCP_CONNECT_TIMEOUT_S = 5.0
+
+# How often a LAN-only tag's TCP endpoint is probed. The probe is its only
+# availability signal: Home Assistant surfaces an mDNS record only when it
+# changes, so a healthy always-on tag goes silent on the zeroconf side.
+LAN_PROBE_INTERVAL = timedelta(seconds=60)
 
 # Dispatcher signals (suffixed with the device address at send/subscribe time).
 # Carries the JPEG preview of the frame shown by the image entity.

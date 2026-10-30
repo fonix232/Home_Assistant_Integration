@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from opendisplay.models.advertisement import TouchTracker
 
 from . import OpenDisplayConfigEntry
+from .coordinator import OpenDisplayCoordinator
 from .entity import OpenDisplayEntity
 
 PARALLEL_UPDATES = 0
@@ -41,6 +42,8 @@ async def async_setup_entry(
 ) -> None:
     """Set up OpenDisplay event entities from binary_inputs and touch_controllers config."""
     coordinator = entry.runtime_data.coordinator
+    # LAN_ONLY_PLATFORMS excludes this platform.
+    assert isinstance(coordinator, OpenDisplayCoordinator)
     entity_registry = er.async_get(hass)
 
     def _remove_stale(prefix: str, active_ids: set[str]) -> None:

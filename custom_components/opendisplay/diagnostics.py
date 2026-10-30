@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 
 from . import OpenDisplayConfigEntry
 from .const import CONF_HOST, CONF_PORT, CONF_TLS
+from .transport import is_lan_only
 
 TO_REDACT = {
     "ssid",
@@ -79,6 +80,7 @@ async def async_get_config_entry_diagnostics(
         "host": entry.data.get(CONF_HOST),
         "port": entry.data.get(CONF_PORT),
         "tls": entry.data.get(CONF_TLS),
+        "lan_only": is_lan_only(entry),
         "last_transport": getattr(runtime, "last_transport", None),
         "mdns_last_seen": getattr(runtime, "mdns_last_seen", None),
         "communication_modes": getattr(system, "communication_modes", None),

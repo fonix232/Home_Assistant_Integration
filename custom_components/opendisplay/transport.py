@@ -11,6 +11,9 @@ device was seen via mDNS within ``MDNS_FRESHNESS_WINDOW`` (fed by the zeroconf
 config-flow step, see ``note_mdns_seen``); otherwise use BLE. Any WiFi failure
 (unreachable / connect / TLS handshake / mid-transfer / stale port) falls back to
 BLE for that same delivery — a hard requirement — via ``async_run_with_fallback``.
+
+A LAN-only entry (``CONF_LAN_ONLY``) has no BLE to prefer or fall back to: it
+always resolves to WiFi, and a WiFi failure is the delivery's failure.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ from opendisplay import (
 
 from .const import (
     CONF_HOST,
+    CONF_LAN_ONLY,
     CONF_PORT,
     CONF_TLS,
     DEFAULT_LAN_PORT,
@@ -73,6 +77,11 @@ class ResolvedTransport:
     tls: bool
 
 
+def is_lan_only(entry: OpenDisplayConfigEntry) -> bool:
+    """Return True if ``entry``'s tag is reached only over TCP (no BLE)."""
+    return bool(entry.data.get(CONF_LAN_ONLY))
+
+
 async def async_probe_tcp(host: str, port: int) -> None:
     """Open and immediately close a TCP connection to ``host:port``.
 
@@ -103,6 +112,8 @@ def resolve_transport(entry: OpenDisplayConfigEntry) -> ResolvedTransport:
     tls = bool(data.get(CONF_TLS))
     if not host:
         return ResolvedTransport(False, None, port, tls)
+    if is_lan_only(entry):
+        return ResolvedTransport(True, host, port, tls)
 
     last_seen = _mdns_last_seen(entry)
     fresh = (
@@ -191,6 +202,8 @@ async def async_run_with_fallback(
             ) as device:
                 await action(device)
         except WIFI_FALLBACK_EXCEPTIONS as err:
+            if is_lan_only(entry):
+                raise
             _LOGGER.warning(
                 "%s: WiFi delivery to %s:%s failed (%s); falling back to BLE",
                 address,
