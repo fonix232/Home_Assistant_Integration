@@ -37,6 +37,10 @@ _LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 # used only to name the holder in the contention WARNING.
 _HOLDERS: dict[str, str] = {}
 
+# Purpose of the LAN presence probe. It holds the lock for at most a TCP connect,
+# so a request waiting on it is routine and not worth a contention WARNING.
+LAN_PROBE_PURPOSE = "LAN presence probe"
+
 
 def async_get_ble_lock(address: str) -> asyncio.Lock:
     """Return the shared BLE lock for ``address``, creating it on first use.
@@ -58,11 +62,12 @@ async def ble_connection(address: str, purpose: str) -> AsyncIterator[None]:
 
     Emits a WARNING (before awaiting the lock) when the link is already held,
     naming both the waiting ``purpose`` and the current holder, so overlapping
-    connect attempts on the same tag are diagnosable.
+    connect attempts on the same tag are diagnosable. A wait on the short LAN
+    presence probe is expected and stays quiet.
     """
     key = format_mac(address)
     lock = async_get_ble_lock(address)
-    if lock.locked():
+    if lock.locked() and _HOLDERS.get(key) != LAN_PROBE_PURPOSE:
         _LOGGER.warning(
             "%s: BLE connection for %s requested while %s holds the device's "
             "single BLE link; waiting for it to finish",

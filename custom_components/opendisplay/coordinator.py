@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from homeassistant.components.bluetooth import (
     BluetoothChange,
@@ -12,7 +13,6 @@ from homeassistant.components.bluetooth import (
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothDataUpdateCoordinator,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -25,9 +25,12 @@ from opendisplay.models.advertisement import (
 )
 from opendisplay.models.config import BinaryInputs
 
-from .ble_lock import async_get_ble_lock, ble_connection
+from .ble_lock import LAN_PROBE_PURPOSE, async_get_ble_lock, ble_connection
 from .const import LAN_PROBE_INTERVAL
 from .transport import async_probe_tcp, resolve_transport
+
+if TYPE_CHECKING:
+    from . import OpenDisplayConfigEntry
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -207,7 +210,7 @@ class OpenDisplayLanCoordinator(DataUpdateCoordinator[None]):
     ``data`` stays None and nothing advert-derived is reported.
     """
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+    def __init__(self, hass: HomeAssistant, entry: OpenDisplayConfigEntry) -> None:
         """Initialize the coordinator for ``entry``'s LAN endpoint."""
         super().__init__(
             hass,
@@ -216,6 +219,7 @@ class OpenDisplayLanCoordinator(DataUpdateCoordinator[None]):
             name=f"OpenDisplay {entry.unique_id}",
             update_interval=LAN_PROBE_INTERVAL,
         )
+        self._entry = entry
         self.address: str = entry.unique_id or ""
         self._device_seen_callbacks: set[CALLBACK_TYPE] = set()
 
@@ -249,11 +253,11 @@ class OpenDisplayLanCoordinator(DataUpdateCoordinator[None]):
         # A held lock means a delivery has the tag's single LAN client slot, which
         # is proof enough it is up; a probe would only queue behind it.
         if not async_get_ble_lock(self.address).locked():
-            assert self.config_entry is not None
-            resolved = resolve_transport(self.config_entry)
-            assert resolved.host is not None
+            resolved = resolve_transport(self._entry)
+            if resolved.host is None:
+                raise UpdateFailed("no LAN host stored for this entry")
             try:
-                async with ble_connection(self.address, "LAN presence probe"):
+                async with ble_connection(self.address, LAN_PROBE_PURPOSE):
                     await async_probe_tcp(resolved.host, resolved.port)
             except (OSError, TimeoutError) as err:
                 raise UpdateFailed(
